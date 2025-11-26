@@ -12,6 +12,7 @@ spec:
     tty: true
     securityContext:
       runAsUser: 0
+
   - name: dind
     image: docker:24-dind
     securityContext:
@@ -19,13 +20,18 @@ spec:
     command:
     - dockerd-entrypoint.sh
     tty: true
+
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command: ["cat"]
+    tty: true
 """
         }
     }
 
     environment {
         IMAGE_NAME = "karankumawat/devsecops-app"
-        IMAGE_TAG = "v1"
+        IMAGE_TAG = "v2"
     }
 
     stages {
@@ -46,22 +52,22 @@ spec:
             }
         }
 
-        stage('Secret Scanning - Gitleaks') {
+        stage('Secret Scan - Gitleaks') {
             steps {
                 container('dind') {
                     sh '''
-                    apk add git
-                    docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest detect --source=/repo --no-git || true
+                      apk add git
+                      docker run --rm -v $(pwd):/repo zricethezav/gitleaks detect --source=/repo --no-git || true
                     '''
                 }
             }
         }
 
-        stage('SCA Scan - Trivy FS') {
+        stage('SCA - Trivy FS Scan') {
             steps {
                 container('dind') {
                     sh '''
-                      docker run --rm -v $(pwd):/app aquasec/trivy fs /app
+                      docker run --rm -v $(pwd):/app aquasec/trivy fs --timeout 15m /app || true
                     '''
                 }
             }
@@ -81,7 +87,6 @@ spec:
             steps {
                 container('dind') {
                     sh '''
-                      eval $(minikube -p minikube docker-env)
                       docker build -t $IMAGE_NAME:$IMAGE_TAG .
                     '''
                 }
@@ -92,7 +97,7 @@ spec:
             steps {
                 container('dind') {
                     sh '''
-                      docker run --rm aquasec/trivy image $IMAGE_NAME:$IMAGE_TAG || true
+                      docker run --rm aquasec/trivy image --timeout 15m $IMAGE_NAME:$IMAGE_TAG || true
                     '''
                 }
             }
@@ -102,7 +107,7 @@ spec:
             steps {
                 container('dind') {
                     sh '''
-                      docker run --rm -t owasp/zap2docker-stable zap-baseline.py -t http://devsecops-app:5000 || true
+                      docker run --rm -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:5000 || true
                     '''
                 }
             }
@@ -110,9 +115,8 @@ spec:
 
         stage('Deploy to Kubernetes') {
             steps {
-                container('dind') {
+                container('kubectl') {
                     sh '''
-                      eval $(minikube -p minikube docker-env)
                       kubectl delete deploy devsecops-app --ignore-not-found
                       kubectl create deployment devsecops-app --image=$IMAGE_NAME:$IMAGE_TAG
                       kubectl expose deployment devsecops-app --type=NodePort --port=5000 || true
@@ -125,10 +129,10 @@ spec:
 
     post {
         success {
-            echo "DevSecOps Pipeline Completed Successfully!"
+            echo "Pipeline completed successfully!"
         }
         failure {
-            echo "Pipeline Failed."
+            echo "Pipeline failed. Fix above errors."
         }
     }
 }

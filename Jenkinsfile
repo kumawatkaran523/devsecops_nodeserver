@@ -1,32 +1,53 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            yaml """
+apiVersion: v1
+kind: Pod
+spec:
+  containers:
+  - name: node
+    image: node:18-alpine
+    command:
+    - cat
+    tty: true
+  - name: dind
+    image: docker:24-dind
+    securityContext:
+      privileged: true
+    command:
+    - dockerd-entrypoint.sh
+    tty: true
+"""
+        }
+    }
 
     stages {
 
         stage('Checkout') {
             steps {
-                checkout scm
+                container('node') {
+                    checkout scm
+                }
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                sh 'npm install'
+                container('node') {
+                    sh 'npm install'
+                }
             }
         }
 
         stage('Build Docker Image') {
             steps {
-                sh 'docker build -t karankumawat/devsecops-app:v1 .'
-            }
-        }
-
-        stage('Push Docker Image') {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
-                    sh 'echo $PASS | docker login -u $USER --password-stdin'
+                container('dind') {
+                    sh '''
+                      eval $(minikube -p minikube docker-env)
+                      docker build -t devsecops-app:v1 .
+                    '''
                 }
-                sh 'docker push karankumawat/devsecops-app:v1'
             }
         }
     }

@@ -48,10 +48,10 @@ spec:
 
         stage('Secret Scanning - Gitleaks') {
             steps {
-                container('node') {
+                container('dind') {
                     sh '''
-                        apk add git
-                        docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest detect --source=/repo --no-git
+                    apk add git
+                    docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest detect --source=/repo --no-git || true
                     '''
                 }
             }

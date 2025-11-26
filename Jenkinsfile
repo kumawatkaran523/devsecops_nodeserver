@@ -17,14 +17,19 @@ spec:
     image: docker:24-dind
     securityContext:
       privileged: true
-    command:
-    - dockerd-entrypoint.sh
     tty: true
+    volumeMounts:
+    - name: docker-storage
+      mountPath: /var/lib/docker
 
   - name: kubectl
     image: bitnami/kubectl:latest
     command: ["cat"]
     tty: true
+    
+  volumes:
+  - name: docker-storage
+    emptyDir: {}
 """
         }
     }
@@ -56,6 +61,7 @@ spec:
             steps {
                 container('dind') {
                     sh '''
+                      sleep 5
                       apk add git
                       docker run --rm -v $(pwd):/repo zricethezav/gitleaks detect --source=/repo --no-git || true
                     '''
@@ -73,12 +79,10 @@ spec:
             }
         }
 
-        stage('SAST - Semgrep') {
+        stage('SAST - npm audit') {
             steps {
                 container('node') {
-                    sh '''
-                      docker run --rm -v $(pwd):/src returntocorp/semgrep semgrep scan --config auto /src || true
-                    '''
+                    sh 'npm audit --audit-level=moderate || true'
                 }
             }
         }
@@ -86,9 +90,12 @@ spec:
         stage('Build Docker Image') {
             steps {
                 container('dind') {
-                    sh '''
-                      docker build -t $IMAGE_NAME:$IMAGE_TAG .
-                    '''
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh '''
+                          docker build -t $IMAGE_NAME:$IMAGE_TAG .
+                          echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                          docker push $IMAGE_NAME:$IMAGE_TAG                        '''
+                    }
                 }
             }
         }
@@ -97,7 +104,7 @@ spec:
             steps {
                 container('dind') {
                     sh '''
-                      docker run --rm aquasec/trivy image --timeout 15m $IMAGE_NAME:$IMAGE_TAG || true
+                      docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image --timeout 15m $IMAGE_NAME:$IMAGE_TAG || true
                     '''
                 }
             }
@@ -107,7 +114,8 @@ spec:
             steps {
                 container('dind') {
                     sh '''
-                      docker run --rm -t owasp/zap2docker-stable zap-baseline.py -t http://localhost:5000 || true
+                      APP_URL=$(kubectl get svc devsecops-app-service -o jsonpath='{.spec.clusterIP}'):3000 || echo "http://devsecops-app-service:3000"
+                      docker run --rm -t zaproxy/zap-stable zap-baseline.py -t $APP_URL || true
                     '''
                 }
             }
@@ -117,9 +125,8 @@ spec:
             steps {
                 container('kubectl') {
                     sh '''
-                      kubectl delete deploy devsecops-app --ignore-not-found
-                      kubectl create deployment devsecops-app --image=$IMAGE_NAME:$IMAGE_TAG
-                      kubectl expose deployment devsecops-app --type=NodePort --port=5000 || true
+                      kubectl apply -f k8s/deployment.yaml
+                      kubectl rollout status deployment/devsecops-app
                     '''
                 }
             }
@@ -132,7 +139,7 @@ spec:
             echo "Pipeline completed successfully!"
         }
         failure {
-            echo "Pipeline failed. Fix above errors."
+            echo "Pipeline failed. Check logs above."
         }
     }
 }

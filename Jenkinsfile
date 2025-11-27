@@ -16,6 +16,7 @@ spec:
     volumeMounts:
     - name: workspace-volume
       mountPath: /home/jenkins/agent
+
   - name: dind
     image: docker:24-dind
     securityContext:
@@ -26,8 +27,9 @@ spec:
     volumeMounts:
     - name: workspace-volume
       mountPath: /home/jenkins/agent
-    - name: docker-graph-storage
+    - name: docker-storage
       mountPath: /var/lib/docker
+
   - name: kubectl
     image: bitnami/kubectl:1.28
     command: ["cat"]
@@ -35,10 +37,11 @@ spec:
     volumeMounts:
     - name: workspace-volume
       mountPath: /home/jenkins/agent
+
   volumes:
   - name: workspace-volume
     emptyDir: {}
-  - name: docker-graph-storage
+  - name: docker-storage
     emptyDir: {}
 """
     }
@@ -46,12 +49,11 @@ spec:
 
   environment {
     IMAGE_NAME = "karankumawat/devsecops-app"
-    IMAGE_TAG  = "v1"
+    IMAGE_TAG  = "v3"
   }
 
   options {
     timeout(time: 30, unit: 'MINUTES')
-    ansiColor('xterm')
   }
 
   stages {
@@ -67,7 +69,7 @@ spec:
     stage('Install Dependencies') {
       steps {
         container('node') {
-          sh 'npm ci'
+          sh 'npm install'
         }
       }
     }
@@ -77,7 +79,7 @@ spec:
         container('dind') {
           sh '''
             apk add --no-cache git
-            docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest detect --source=/repo --no-git || true
+            docker run --rm -v $(pwd):/repo zricethezav/gitleaks detect --source=/repo --no-git || true
           '''
         }
       }
@@ -87,7 +89,7 @@ spec:
       steps {
         container('dind') {
           sh '''
-            docker run --rm -v $(pwd):/app aquasec/trivy fs --timeout 15m /app || true
+            docker run --rm -v $(pwd):/app aquasec/trivy fs --timeout 10m /app || true
           '''
         }
       }
@@ -117,24 +119,22 @@ spec:
       }
     }
 
-    stage('Container Scan - Trivy Remote/Image') {
+    stage('Container Scan - Trivy Image') {
       steps {
         container('dind') {
           sh '''
-            docker run --rm aquasec/trivy image --timeout 15m $IMAGE_NAME:$IMAGE_TAG || true
+            docker run --rm aquasec/trivy image --timeout 10m $IMAGE_NAME:$IMAGE_TAG || true
           '''
         }
       }
     }
 
-    stage('DAST - OWASP ZAP (quick)') {
+    stage('DAST - OWASP ZAP') {
       steps {
         container('dind') {
           sh '''
-            # run quickly against service URL inside cluster (if available)
-            # fallback: skip quietly if ZAP pull/ping fails
-            APP_URL="http://devsecops-app:5000"
-            docker run --rm -t owasp/zap2docker-stable zap-baseline.py -t $APP_URL || true
+            TARGET_URL="http://devsecops-app:5000"
+            docker run --rm -t owasp/zap2docker-stable zap-baseline.py -t $TARGET_URL || true
           '''
         }
       }
@@ -144,27 +144,25 @@ spec:
       steps {
         container('kubectl') {
           sh '''
-            # create/update deployment and expose (idempotent)
-            kubectl set image deployment/devsecops-app devsecops-app=$IMAGE_NAME:$IMAGE_TAG --ignore-not-found || true
-            kubectl get deployment devsecops-app >/dev/null 2>&1 || kubectl create deployment devsecops-app --image=$IMAGE_NAME:$IMAGE_TAG
-            kubectl expose deployment devsecops-app --type=NodePort --port=5000 --name=devsecops-app-service || true
+            kubectl delete deployment devsecops-app --ignore-not-found
+            kubectl create deployment devsecops-app --image=$IMAGE_NAME:$IMAGE_TAG
+            kubectl expose deployment devsecops-app --type=NodePort --port=5000 --name=devsecops-service || true
             kubectl rollout status deployment/devsecops-app --timeout=120s || true
-            kubectl get pods -l app=devsecops-app -o wide || true
+            kubectl get svc devsecops-service
           '''
         }
       }
     }
+
   }
 
   post {
     success {
-      echo "🎉 Pipeline finished SUCCESS"
+      echo "Pipeline completed successfully!"
     }
+
     failure {
-      echo "❌ Pipeline FAILED — check console"
-    }
-    always {
-      archiveArtifacts allowEmptyArchive: true, artifacts: '**/reports/**', onlyIfSuccessful: false
+      echo "Pipeline failed. Fix the above errors."
     }
   }
 }

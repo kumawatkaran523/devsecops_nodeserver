@@ -8,6 +8,7 @@ spec:
   serviceAccountName: default
   securityContext:
     runAsUser: 0
+
   containers:
   - name: node
     image: node:18-alpine
@@ -31,7 +32,7 @@ spec:
       mountPath: /var/lib/docker
 
   - name: kubectl
-    image: bitnami/kubectl:1.28
+    image: lachlanevenson/k8s-kubectl:v1.28.0
     command: ["cat"]
     tty: true
     volumeMounts:
@@ -160,9 +161,8 @@ spec:
     success {
       echo "Pipeline completed successfully!"
     }
-
     failure {
-      echo "Pipeline failed. Fix the above errors."
+      echo "Pipeline failed. Fix the errors above."
     }
   }
 }

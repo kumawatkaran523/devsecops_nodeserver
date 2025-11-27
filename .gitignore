@@ -1,0 +1,14 @@
+# Ignore specific files
+secrets.txt
+my_config.ini
+
+# Ignore entire directories
+node_modules/
+build/
+
+# Ignore files by extension
+*.log
+*.tmp
+
+# Ignore files matching a pattern in a specific directory
+logs/**/*.log

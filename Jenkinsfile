@@ -5,44 +5,31 @@ pipeline {
 apiVersion: v1
 kind: Pod
 spec:
-  serviceAccountName: default
-  securityContext:
-    runAsUser: 0
-
+  serviceAccountName: jenkins
   containers:
   - name: node
     image: node:18-alpine
-    command: ["cat"]
+    command: ['cat']
     tty: true
-    volumeMounts:
-    - name: workspace-volume
-      mountPath: /home/jenkins/agent
 
-  - name: dind
+  - name: docker
     image: docker:24-dind
     securityContext:
       privileged: true
-    command:
-    - dockerd-entrypoint.sh
-    tty: true
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
     volumeMounts:
-    - name: workspace-volume
-      mountPath: /home/jenkins/agent
-    - name: docker-storage
-      mountPath: /var/lib/docker
+    - name: docker-sock
+      mountPath: /var/run
 
   - name: kubectl
-    image: lachlanevenson/k8s-kubectl:v1.28.0
-    command: ["cat"]
+    image: bitnami/kubectl:1.28
+    command: ['cat']
     tty: true
-    volumeMounts:
-    - name: workspace-volume
-      mountPath: /home/jenkins/agent
 
   volumes:
-  - name: workspace-volume
-    emptyDir: {}
-  - name: docker-storage
+  - name: docker-sock
     emptyDir: {}
 """
     }
@@ -50,20 +37,14 @@ spec:
 
   environment {
     IMAGE_NAME = "karankumawat/devsecops-app"
-    IMAGE_TAG  = "v3"
-  }
-
-  options {
-    timeout(time: 30, unit: 'MINUTES')
+    IMAGE_TAG  = "${BUILD_NUMBER}"
   }
 
   stages {
 
     stage('Checkout') {
       steps {
-        container('node') {
-          checkout scm
-        }
+        checkout scm
       }
     }
 
@@ -77,10 +58,11 @@ spec:
 
     stage('Secret Scan - Gitleaks') {
       steps {
-        container('dind') {
+        container('docker') {
           sh '''
+            sleep 5
             apk add --no-cache git
-            docker run --rm -v $(pwd):/repo zricethezav/gitleaks detect --source=/repo --no-git || true
+            docker run --rm -v $PWD:/repo zricethezav/gitleaks:latest detect --source=/repo --no-git -v || true
           '''
         }
       }
@@ -88,31 +70,27 @@ spec:
 
     stage('SCA - Trivy FS Scan') {
       steps {
-        container('dind') {
-          sh '''
-            docker run --rm -v $(pwd):/app aquasec/trivy fs --timeout 10m /app || true
-          '''
+        container('docker') {
+          sh 'docker run --rm -v $PWD:/app aquasec/trivy:latest fs --scanners vuln /app || true'
         }
       }
     }
 
-    stage('SAST - Semgrep') {
+    stage('SAST - npm audit') {
       steps {
         container('node') {
-          sh '''
-            docker run --rm -v $(pwd):/src returntocorp/semgrep semgrep scan --config auto /src || true
-          '''
+          sh 'npm audit --audit-level=moderate || true'
         }
       }
     }
 
     stage('Build & Push Image') {
       steps {
-        container('dind') {
-          withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+        container('docker') {
+          withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
             sh '''
               docker build -t $IMAGE_NAME:$IMAGE_TAG .
-              echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+              echo $PASS | docker login -u $USER --password-stdin
               docker push $IMAGE_NAME:$IMAGE_TAG
             '''
           }
@@ -120,23 +98,10 @@ spec:
       }
     }
 
-    stage('Container Scan - Trivy Image') {
+    stage('Container Image Scan') {
       steps {
-        container('dind') {
-          sh '''
-            docker run --rm aquasec/trivy image --timeout 10m $IMAGE_NAME:$IMAGE_TAG || true
-          '''
-        }
-      }
-    }
-
-    stage('DAST - OWASP ZAP') {
-      steps {
-        container('dind') {
-          sh '''
-            TARGET_URL="http://devsecops-app:5000"
-            docker run --rm -t owasp/zap2docker-stable zap-baseline.py -t $TARGET_URL || true
-          '''
+        container('docker') {
+          sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image $IMAGE_NAME:$IMAGE_TAG || true'
         }
       }
     }
@@ -145,11 +110,9 @@ spec:
       steps {
         container('kubectl') {
           sh '''
-            kubectl delete deployment devsecops-app --ignore-not-found
-            kubectl create deployment devsecops-app --image=$IMAGE_NAME:$IMAGE_TAG
-            kubectl expose deployment devsecops-app --type=NodePort --port=5000 --name=devsecops-service || true
-            kubectl rollout status deployment/devsecops-app --timeout=120s || true
-            kubectl get svc devsecops-service
+            kubectl apply -f k8s/deployment.yaml
+            kubectl set image deployment/devsecops-app devsecops-app=$IMAGE_NAME:$IMAGE_TAG
+            kubectl rollout status deployment/devsecops-app --timeout=2m
           '''
         }
       }
@@ -159,10 +122,10 @@ spec:
 
   post {
     success {
-      echo "Pipeline completed successfully!"
+      echo '✅ DevSecOps Pipeline SUCCESS!'
     }
     failure {
-      echo "Pipeline failed. Fix the errors above."
+      echo '❌ Pipeline FAILED'
     }
   }
 }

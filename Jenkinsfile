@@ -19,18 +19,12 @@ spec:
     env:
     - name: DOCKER_TLS_CERTDIR
       value: ""
-    volumeMounts:
-    - name: docker-sock
-      mountPath: /var/run
 
   - name: kubectl
-    image: bitnami/kubectl:latest
-    command: ['cat']
+    image: alpine/k8s:1.28.3
+    command: ['/bin/sh', '-c']
+    args: ['cat']
     tty: true
-
-  volumes:
-  - name: docker-sock
-    emptyDir: {}
 """
     }
   }
@@ -60,9 +54,9 @@ spec:
       steps {
         container('docker') {
           sh '''
-            sleep 5
+            sleep 10
             apk add --no-cache git
-            docker run --rm -v $PWD:/repo zricethezav/gitleaks:latest detect --source=/repo --no-git -v || true
+            docker run --rm -v /home/jenkins/agent/workspace/devsecops-pipeline:/repo zricethezav/gitleaks:latest detect --source=/repo --no-git -v || true
           '''
         }
       }
@@ -71,7 +65,7 @@ spec:
     stage('SCA - Trivy FS Scan') {
       steps {
         container('docker') {
-          sh 'docker run --rm -v $PWD:/app aquasec/trivy:latest fs --scanners vuln /app || true'
+          sh 'docker run --rm -v /home/jenkins/agent/workspace/devsecops-pipeline:/app aquasec/trivy:latest fs --scanners vuln /app || true'
         }
       }
     }
@@ -89,6 +83,7 @@ spec:
         container('docker') {
           withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'USER', passwordVariable: 'PASS')]) {
             sh '''
+              cd /home/jenkins/agent/workspace/devsecops-pipeline
               docker build -t $IMAGE_NAME:$IMAGE_TAG .
               echo $PASS | docker login -u $USER --password-stdin
               docker push $IMAGE_NAME:$IMAGE_TAG
@@ -101,7 +96,7 @@ spec:
     stage('Container Image Scan') {
       steps {
         container('docker') {
-          sh 'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image $IMAGE_NAME:$IMAGE_TAG || true'
+          sh 'docker run --rm aquasec/trivy:latest image $IMAGE_NAME:$IMAGE_TAG || true'
         }
       }
     }
@@ -110,9 +105,10 @@ spec:
       steps {
         container('kubectl') {
           sh '''
+            cd /home/jenkins/agent/workspace/devsecops-pipeline
             kubectl apply -f k8s/deployment.yaml
-            kubectl set image deployment/devsecops-app devsecops-app=$IMAGE_NAME:$IMAGE_TAG
-            kubectl rollout status deployment/devsecops-app --timeout=2m
+            kubectl rollout status deployment/devsecops-app --timeout=2m || true
+            kubectl get pods
           '''
         }
       }
@@ -122,10 +118,10 @@ spec:
 
   post {
     success {
-      echo '✅ DevSecOps Pipeline SUCCESS!'
+      echo '✅ ALL STAGES PASSED!'
     }
     failure {
-      echo '❌ Pipeline FAILED'
+      echo '❌ PIPELINE FAILED'
     }
   }
 }

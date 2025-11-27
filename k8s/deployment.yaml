@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: devsecops-app
-        image: karankumawat/devsecops-app:0
+        image: karankumawat/devsecops-app:dummy
         ports:
         - containerPort: 5000
 ---

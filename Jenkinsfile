@@ -102,17 +102,29 @@ spec:
     }
 
     stage('Deploy to Kubernetes') {
-      steps {
-        container('kubectl') {
-          sh '''
-            cd /home/jenkins/agent/workspace/devsecops-pipeline
-            kubectl apply -f k8s/deployment.yaml -n default
-            kubectl rollout status deployment/devsecops-app -n default --timeout=2m
-            kubectl get pods -n default
-          '''
+        steps {
+            container('kubectl') {
+            sh '''
+                cd /home/jenkins/agent/workspace/devsecops-pipeline
+
+                # Apply deployment + service (namespace: default)
+                kubectl apply -f k8s/deployment.yaml -n default
+
+                # Override dummy image with real image built by Jenkins
+                kubectl set image deployment/devsecops-app \
+                devsecops-app=$IMAGE_NAME:$IMAGE_TAG \
+                -n default
+
+                # Wait for rollout to complete
+                kubectl rollout status deployment/devsecops-app -n default --timeout=2m
+
+                # Show running pods
+                kubectl get pods -n default
+            '''
+            }
         }
-      }
     }
+
 
   }
 

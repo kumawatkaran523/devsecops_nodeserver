@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devsecops-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devsecops-app
+  template:
+    metadata:
+      labels:
+        app: devsecops-app
+    spec:
+      containers:
+      - name: devsecops-app
+        # Tag Jenkins pipeline override karega
+        image: karankumawat/devsecops-app:0
+        ports:
+        - containerPort: 5000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devsecops-service
+spec:
+  selector:
+    app: devsecops-app
+  type: NodePort
+  ports:
+    - port: 5000
+      targetPort: 5000
+      nodePort: 30080

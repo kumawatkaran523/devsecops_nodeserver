@@ -24,7 +24,7 @@ spec:
       mountPath: /var/run
 
   - name: kubectl
-    image: bitnami/kubectl:1.28
+    image: bitnami/kubectl:latest
     command: ['cat']
     tty: true
 

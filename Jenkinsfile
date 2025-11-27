@@ -106,9 +106,9 @@ spec:
         container('kubectl') {
           sh '''
             cd /home/jenkins/agent/workspace/devsecops-pipeline
-            kubectl apply -f k8s/deployment.yaml
-            kubectl rollout status deployment/devsecops-app --timeout=2m || true
-            kubectl get pods
+            kubectl apply -f k8s/deployment.yaml -n default
+            kubectl rollout status deployment/devsecops-app -n default --timeout=2m
+            kubectl get pods -n default
           '''
         }
       }

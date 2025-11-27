@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: devsecops-app
+  namespace: default
 spec:
   replicas: 1
   selector:
@@ -14,7 +15,6 @@ spec:
     spec:
       containers:
       - name: devsecops-app
-        # Tag Jenkins pipeline override karega
         image: karankumawat/devsecops-app:0
         ports:
         - containerPort: 5000
@@ -23,6 +23,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: devsecops-service
+  namespace: default
 spec:
   selector:
     app: devsecops-app
